@@ -1,0 +1,45 @@
+---
+# User Account Audit Playbook
+# Real-world use case: Security compliance - audit user accounts on servers
+
+- name: User Account Security Audit
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Get all user accounts
+      ansible.builtin.command: "cat /etc/passwd"
+      register: passwd_contents
+      changed_when: false
+
+    - name: Count total users
+      ansible.builtin.set_fact:
+        total_users: "{{ passwd_contents.stdout_lines | length }}"
+        system_users: "{{ passwd_contents.stdout_lines | select('match', '.*:/sbin/nologin$') | list | length }}"
+        login_users: "{{ passwd_contents.stdout_lines | reject('match', '.*:/sbin/nologin$') | reject('match', '.*:/bin/false$') | list | length }}"
+
+    - name: Display User Audit Report
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  USER ACCOUNT AUDIT REPORT"
+          - "============================================"
+          - "Server:         {{ ansible_hostname }}"
+          - "Total Accounts: {{ total_users }}"
+          - "System Users:   {{ system_users }}"
+          - "Login Users:    {{ login_users }}"
+          - "============================================"
+
+    - name: List users with login shells
+      ansible.builtin.debug:
+        msg: "Login user: {{ item.split(':')[0] }} (UID: {{ item.split(':')[2] }}, Shell: {{ item.split(':')[-1] }})"
+      loop: "{{ passwd_contents.stdout_lines }}"
+      when: >
+        item.split(":")[-1] != "/sbin/nologin" and
+        item.split(":")[-1] != "/bin/false"
+
+    - name: Check for UID 0 accounts (root equivalents)
+      ansible.builtin.debug:
+        msg: "WARNING: UID 0 account found: {{ item.split(':')[0] }}"
+      loop: "{{ passwd_contents.stdout_lines }}"
+      when: "item.split(':')[2] == '0'"

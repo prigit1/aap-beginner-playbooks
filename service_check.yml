@@ -1,0 +1,53 @@
+---
+# Service Status Check Playbook
+# Real-world use case: Verify critical services are running
+
+- name: Critical Service Status Check
+  hosts: all
+  gather_facts: true
+
+  vars:
+    services_to_check:
+      - crond
+      - sshd
+
+  tasks:
+    - name: Display check header
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  SERVICE STATUS CHECK"
+          - "  Server: {{ ansible_hostname }}"
+          - "  OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "============================================"
+
+    - name: Check if services are running
+      ansible.builtin.command: "systemctl is-active {{ item }}"
+      loop: "{{ services_to_check }}"
+      register: service_results
+      changed_when: false
+      failed_when: false
+
+    - name: Report service status
+      ansible.builtin.debug:
+        msg: "Service {{ item.item }}: {{ item.stdout | upper }}"
+      loop: "{{ service_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check listening ports
+      ansible.builtin.command: "ss -tlnp"
+      register: listening_ports
+      changed_when: false
+      failed_when: false
+
+    - name: Display listening ports
+      ansible.builtin.debug:
+        msg: "{{ listening_ports.stdout_lines }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  CHECK COMPLETE: {{ ansible_date_time.iso8601 }}"
+          - "============================================"

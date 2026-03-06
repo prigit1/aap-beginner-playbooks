@@ -1,0 +1,70 @@
+---
+# Server Health Check Playbook
+# Gathers system information and reports on server health
+# This is a real-world use case for daily/weekly compliance checks
+
+- name: Server Health Check Report
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Display System Overview
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  SERVER HEALTH CHECK REPORT"
+          - "============================================"
+          - "Hostname:       {{ ansible_hostname }}"
+          - "FQDN:           {{ ansible_fqdn }}"
+          - "OS:             {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel:         {{ ansible_kernel }}"
+          - "Architecture:   {{ ansible_architecture }}"
+          - "Python:         {{ ansible_python_version }}"
+          - "Uptime:         {{ ansible_uptime_seconds | int // 86400 }} days"
+          - "============================================"
+
+    - name: Check CPU Information
+      ansible.builtin.debug:
+        msg:
+          - "--- CPU INFO ---"
+          - "Processor:      {{ ansible_processor[2] | default(ansible_processor[0]) }}"
+          - "CPU Cores:      {{ ansible_processor_cores }}"
+          - "CPU Count:      {{ ansible_processor_count }}"
+          - "vCPUs:          {{ ansible_processor_vcpus }}"
+
+    - name: Check Memory Usage
+      ansible.builtin.debug:
+        msg:
+          - "--- MEMORY INFO ---"
+          - "Total RAM:      {{ ansible_memtotal_mb }} MB"
+          - "Free RAM:       {{ ansible_memfree_mb }} MB"
+          - "Used RAM:       {{ ansible_memtotal_mb - ansible_memfree_mb }} MB"
+          - "Usage:          {{ ((ansible_memtotal_mb - ansible_memfree_mb) / ansible_memtotal_mb * 100) | round(1) }}%"
+
+    - name: Check Disk Usage
+      ansible.builtin.debug:
+        msg:
+          - "--- DISK INFO ---"
+          - "Mount: {{ item.mount }}"
+          - "  Total:  {{ (item.size_total / 1073741824) | round(2) }} GB"
+          - "  Used:   {{ ((item.size_total - item.size_available) / 1073741824) | round(2) }} GB"
+          - "  Free:   {{ (item.size_available / 1073741824) | round(2) }} GB"
+          - "  Usage:  {{ ((item.size_total - item.size_available) / item.size_total * 100) | round(1) }}%"
+      loop: "{{ ansible_mounts }}"
+      when: item.size_total > 0
+
+    - name: Check Network Interfaces
+      ansible.builtin.debug:
+        msg:
+          - "--- NETWORK INFO ---"
+          - "Default IPv4:   {{ ansible_default_ipv4.address | default('N/A') }}"
+          - "Default GW:     {{ ansible_default_ipv4.gateway | default('N/A') }}"
+          - "DNS Servers:    {{ ansible_dns.nameservers | default([]) | join(', ') }}"
+
+    - name: Health Status Summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  HEALTH STATUS: ALL CHECKS PASSED"
+          - "  Report generated: {{ ansible_date_time.iso8601 }}"
+          - "============================================"

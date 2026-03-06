@@ -1,0 +1,21 @@
+---
+# Simple Hello World - Your first Ansible playbook
+# Great for testing that AAP is working correctly
+
+- name: Hello World - First Automation
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Say Hello
+      ansible.builtin.debug:
+        msg: "Hello from Ansible Automation Platform! This job ran successfully."
+
+    - name: Show current date and time
+      ansible.builtin.command: date
+      register: current_date
+      changed_when: false
+
+    - name: Display the date
+      ansible.builtin.debug:
+        msg: "Current date/time on {{ inventory_hostname }}: {{ current_date.stdout }}"
