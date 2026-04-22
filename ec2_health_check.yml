@@ -1,0 +1,223 @@
+---
+- name: EC2 Instance Health Check
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    disk_usage_threshold: 85
+    memory_usage_threshold: 90
+    load_threshold_multiplier: 2
+
+  tasks:
+    - name: System Overview
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  EC2 INSTANCE HEALTH CHECK"
+          - "============================================"
+          - "Hostname:       {{ ansible_hostname }}"
+          - "OS:             {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel:         {{ ansible_kernel }}"
+          - "Architecture:   {{ ansible_architecture }}"
+          - "vCPUs:          {{ ansible_processor_vcpus }}"
+          - "Total RAM:      {{ ansible_memtotal_mb }} MB"
+          - "Uptime:         {{ ansible_uptime_seconds | int // 86400 }}d {{ (ansible_uptime_seconds | int % 86400) // 3600 }}h"
+          - "============================================"
+
+    - name: Check EC2 instance metadata
+      ansible.builtin.uri:
+        url: "http://169.254.169.254/latest/meta-data/{{ item }}"
+        method: PUT
+        headers:
+          X-aws-ec2-metadata-token-ttl-seconds: "21600"
+        return_content: true
+        timeout: 5
+      register: imds_token_result
+      failed_when: false
+      loop:
+        - ""
+      no_log: true
+
+    - name: Get IMDS token (IMDSv2)
+      ansible.builtin.uri:
+        url: http://169.254.169.254/latest/api/token
+        method: PUT
+        headers:
+          X-aws-ec2-metadata-token-ttl-seconds: "21600"
+        return_content: true
+        timeout: 5
+      register: imds_token
+      failed_when: false
+
+    - name: Fetch EC2 metadata
+      ansible.builtin.uri:
+        url: "http://169.254.169.254/latest/meta-data/{{ item }}"
+        headers:
+          X-aws-ec2-metadata-token: "{{ imds_token.content | default('') }}"
+        return_content: true
+        timeout: 5
+      register: ec2_metadata
+      failed_when: false
+      loop:
+        - instance-id
+        - instance-type
+        - ami-id
+        - placement/availability-zone
+        - public-ipv4
+        - local-ipv4
+        - security-groups
+
+    - name: Display EC2 Metadata
+      ansible.builtin.debug:
+        msg:
+          - "--- EC2 METADATA ---"
+          - "Instance ID:    {{ ec2_metadata.results[0].content | default('N/A') }}"
+          - "Instance Type:  {{ ec2_metadata.results[1].content | default('N/A') }}"
+          - "AMI ID:         {{ ec2_metadata.results[2].content | default('N/A') }}"
+          - "AZ:             {{ ec2_metadata.results[3].content | default('N/A') }}"
+          - "Public IP:      {{ ec2_metadata.results[4].content | default('N/A') }}"
+          - "Private IP:     {{ ec2_metadata.results[5].content | default('N/A') }}"
+          - "Security Groups:{{ ec2_metadata.results[6].content | default('N/A') }}"
+      when: ec2_metadata.results[0].status | default(0) == 200
+
+    - name: Check CPU load average
+      ansible.builtin.command: cat /proc/loadavg
+      register: loadavg
+      changed_when: false
+
+    - name: Evaluate CPU load
+      ansible.builtin.set_fact:
+        load_1m: "{{ loadavg.stdout.split()[0] | float }}"
+        load_5m: "{{ loadavg.stdout.split()[1] | float }}"
+        load_15m: "{{ loadavg.stdout.split()[2] | float }}"
+        load_ok: "{{ loadavg.stdout.split()[0] | float < ansible_processor_vcpus | int * load_threshold_multiplier }}"
+
+    - name: Display CPU Load
+      ansible.builtin.debug:
+        msg:
+          - "--- CPU LOAD ---"
+          - "Load (1/5/15):  {{ load_1m }} / {{ load_5m }} / {{ load_15m }}"
+          - "vCPUs:          {{ ansible_processor_vcpus }}"
+          - "Status:         {{ 'OK' if load_ok else 'WARNING - High load detected' }}"
+
+    - name: Check memory usage
+      ansible.builtin.set_fact:
+        mem_used_mb: "{{ ansible_memtotal_mb - ansible_memfree_mb }}"
+        mem_usage_pct: "{{ ((ansible_memtotal_mb - ansible_memfree_mb) / ansible_memtotal_mb * 100) | round(1) }}"
+
+    - name: Display Memory Status
+      ansible.builtin.debug:
+        msg:
+          - "--- MEMORY ---"
+          - "Total:          {{ ansible_memtotal_mb }} MB"
+          - "Used:           {{ mem_used_mb }} MB ({{ mem_usage_pct }}%)"
+          - "Free:           {{ ansible_memfree_mb }} MB"
+          - "Swap Total:     {{ ansible_swaptotal_mb }} MB"
+          - "Swap Free:      {{ ansible_swapfree_mb }} MB"
+          - "Status:         {{ 'OK' if mem_usage_pct | float < memory_usage_threshold else 'WARNING - High memory usage' }}"
+
+    - name: Check disk usage
+      ansible.builtin.set_fact:
+        disk_warnings: >-
+          {{ ansible_mounts
+             | selectattr('size_total', '>', 0)
+             | selectattr('mount', 'ne', '/boot/efi')
+             | map(attribute='mount')
+             | list
+             | zip(
+                 ansible_mounts
+                 | selectattr('size_total', '>', 0)
+                 | selectattr('mount', 'ne', '/boot/efi')
+                 | map('combine', {})
+                 | list
+               )
+             | list }}
+
+    - name: Display Disk Usage
+      ansible.builtin.debug:
+        msg:
+          - "--- DISK: {{ item.mount }} ---"
+          - "  Size:   {{ (item.size_total / 1073741824) | round(2) }} GB"
+          - "  Used:   {{ ((item.size_total - item.size_available) / 1073741824) | round(2) }} GB"
+          - "  Free:   {{ (item.size_available / 1073741824) | round(2) }} GB"
+          - "  Usage:  {{ ((item.size_total - item.size_available) / item.size_total * 100) | round(1) }}%"
+          - "  Status: {{ 'WARNING' if ((item.size_total - item.size_available) / item.size_total * 100) > disk_usage_threshold else 'OK' }}"
+      loop: "{{ ansible_mounts }}"
+      when: item.size_total > 0
+      loop_control:
+        label: "{{ item.mount }}"
+
+    - name: Check critical services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: service_status
+      failed_when: false
+      loop:
+        - sshd
+        - chronyd
+        - amazon-ssm-agent
+        - cloud-init
+
+    - name: Display Service Status
+      ansible.builtin.debug:
+        msg: "Service {{ item.item }}: {{ item.status.ActiveState | default('not found') }}"
+      loop: "{{ service_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check network connectivity
+      ansible.builtin.uri:
+        url: "{{ item.url }}"
+        timeout: 10
+        return_content: false
+      register: connectivity
+      failed_when: false
+      loop:
+        - { name: "AWS Metadata", url: "http://169.254.169.254/latest/meta-data/" }
+        - { name: "Internet (AWS)", url: "https://aws.amazon.com" }
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Display Connectivity Status
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }}: {{ 'Reachable' if item.status | default(0) == 200 else 'Unreachable' }}"
+      loop: "{{ connectivity.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Check for security updates (RHEL/Amazon Linux)
+      ansible.builtin.command: yum check-update --security
+      register: security_updates
+      changed_when: false
+      failed_when: security_updates.rc not in [0, 100]
+      when: ansible_os_family == "RedHat"
+
+    - name: Display Security Updates
+      ansible.builtin.debug:
+        msg: "Security updates: {{ 'Available' if security_updates.rc == 100 else 'System is up to date' }}"
+      when: ansible_os_family == "RedHat"
+
+    - name: Check last login attempts
+      ansible.builtin.command: lastlog -t 7
+      register: last_logins
+      changed_when: false
+      failed_when: false
+
+    - name: Display Recent Logins
+      ansible.builtin.debug:
+        msg:
+          - "--- RECENT LOGINS (last 7 days) ---"
+          - "{{ last_logins.stdout_lines | default(['No recent logins']) }}"
+
+    - name: Final Health Summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "  HEALTH CHECK SUMMARY"
+          - "============================================"
+          - "CPU Load:       {{ 'PASS' if load_ok else 'WARN' }}"
+          - "Memory:         {{ 'PASS' if mem_usage_pct | float < memory_usage_threshold else 'WARN' }}"
+          - "Connectivity:   {{ 'PASS' if connectivity.results[0].status | default(0) == 200 else 'WARN' }}"
+          - "Report Time:    {{ ansible_date_time.iso8601 }}"
+          - "============================================"
