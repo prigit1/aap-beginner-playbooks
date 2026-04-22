@@ -190,12 +190,12 @@
       ansible.builtin.command: yum check-update --security
       register: security_updates
       changed_when: false
-      failed_when: security_updates.rc not in [0, 100]
+      failed_when: security_updates.rc not in [0, 1, 100]
       when: ansible_os_family == "RedHat"
 
     - name: Display Security Updates
       ansible.builtin.debug:
-        msg: "Security updates: {{ 'Available' if security_updates.rc == 100 else 'System is up to date' }}"
+        msg: "Security updates: {{ 'Available' if security_updates.rc == 100 else 'System is up to date (or no repos enabled)' }}"
       when: ansible_os_family == "RedHat"
 
     - name: Check last login attempts
