@@ -1,0 +1,69 @@
+---
+- name: File System Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    directories_to_check:
+      - path: /tmp
+        expected_mode: "1777"
+      - path: /var/log
+        expected_mode: "0755"
+      - path: /etc
+        expected_mode: "0755"
+      - path: /home
+        expected_mode: "0755"
+
+  tasks:
+    - name: Check if critical directories exist
+      stat:
+        path: "{{ item.path }}"
+      register: dir_stats
+      loop: "{{ directories_to_check }}"
+
+    - name: Display directory status
+      debug:
+        msg: "{{ item.item.path }} — Exists: {{ item.stat.exists }} | Mode: {{ item.stat.mode | default('N/A') }} | Owner: {{ item.stat.pw_name | default('N/A') }}"
+      loop: "{{ dir_stats.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    - name: Check /tmp has correct permissions
+      assert:
+        that:
+          - dir_stats.results[0].stat.exists
+          - dir_stats.results[0].stat.writeable
+        success_msg: "/tmp exists and is writeable"
+        fail_msg: "/tmp is missing or not writeable"
+
+    - name: Check available disk space on root
+      command: df -BG /
+      register: root_disk
+      changed_when: false
+
+    - name: Display root disk space
+      debug:
+        msg: "{{ root_disk.stdout_lines }}"
+
+    - name: Find large files in /tmp (over 100MB)
+      find:
+        paths: /tmp
+        size: 100m
+        recurse: true
+      register: large_files
+      failed_when: false
+
+    - name: Report large files
+      debug:
+        msg: "{{ large_files.files | length }} file(s) over 100MB found in /tmp"
+
+    - name: Check /var/log disk usage
+      command: du -sh /var/log
+      register: log_size
+      changed_when: false
+      failed_when: false
+
+    - name: Display log directory size
+      debug:
+        msg: "/var/log size: {{ log_size.stdout | default('unable to determine') }}"

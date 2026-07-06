@@ -1,0 +1,62 @@
+---
+- name: Package Audit
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Get OS family
+      debug:
+        msg: "OS Family: {{ ansible_os_family }} | Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: List installed packages (RPM-based)
+      command: rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n'
+      register: rpm_packages
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Count installed packages (RPM)
+      debug:
+        msg: "Total RPM packages installed: {{ rpm_packages.stdout_lines | length }}"
+      when: ansible_os_family == "RedHat"
+
+    - name: List installed packages (Debian-based)
+      command: dpkg-query -f '${Package}-${Version}\n' -W
+      register: dpkg_packages
+      changed_when: false
+      when: ansible_os_family == "Debian"
+
+    - name: Count installed packages (Debian)
+      debug:
+        msg: "Total packages installed: {{ dpkg_packages.stdout_lines | length }}"
+      when: ansible_os_family == "Debian"
+
+    - name: List installed packages (macOS)
+      command: brew list --formula
+      register: brew_packages
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "Darwin"
+
+    - name: Count installed packages (macOS)
+      debug:
+        msg: "Total Homebrew packages: {{ brew_packages.stdout_lines | default([]) | length }}"
+      when: ansible_os_family == "Darwin"
+
+    - name: Check Python version
+      command: python3 --version
+      register: python_ver
+      changed_when: false
+
+    - name: Display Python version
+      debug:
+        msg: "{{ python_ver.stdout }}"
+
+    - name: Check Ansible version
+      command: ansible --version
+      register: ansible_ver
+      changed_when: false
+
+    - name: Display Ansible version
+      debug:
+        msg: "{{ ansible_ver.stdout_lines[0] }}"

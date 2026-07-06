@@ -1,0 +1,39 @@
+---
+- name: Disk and Memory Report
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Display memory usage
+      debug:
+        msg:
+          - "Total Memory: {{ ansible_memtotal_mb }} MB"
+          - "Free Memory: {{ ansible_memfree_mb }} MB"
+          - "Used Memory: {{ ansible_memtotal_mb - ansible_memfree_mb }} MB"
+          - "Memory Usage: {{ ((ansible_memtotal_mb - ansible_memfree_mb) / ansible_memtotal_mb * 100) | round(1) }}%"
+
+    - name: Gather disk usage
+      command: df -h
+      register: disk_output
+      changed_when: false
+
+    - name: Display disk usage
+      debug:
+        msg: "{{ disk_output.stdout_lines }}"
+
+    - name: Check if memory usage exceeds 90%
+      assert:
+        that:
+          - ((ansible_memtotal_mb - ansible_memfree_mb) / ansible_memtotal_mb * 100) < 90
+        success_msg: "Memory usage is within acceptable limits"
+        fail_msg: "WARNING - Memory usage exceeds 90%"
+
+    - name: Display system uptime
+      command: uptime
+      register: uptime_output
+      changed_when: false
+
+    - name: Show uptime
+      debug:
+        msg: "{{ uptime_output.stdout }}"

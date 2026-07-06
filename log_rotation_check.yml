@@ -1,0 +1,84 @@
+---
+- name: Log Rotation Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    log_directories:
+      - /var/log
+      - /tmp
+
+  tasks:
+    - name: Check if logrotate is installed
+      command: which logrotate
+      register: logrotate_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Report logrotate status
+      debug:
+        msg: "logrotate: {{ 'INSTALLED' if logrotate_installed.rc == 0 else 'NOT INSTALLED' }}"
+
+    - name: Check log directory sizes
+      command: "du -sh {{ item }}"
+      register: log_sizes
+      loop: "{{ log_directories }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Display log directory sizes
+      debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ log_sizes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Find log files larger than 50MB
+      find:
+        paths: /var/log
+        patterns: "*.log,*.log.*"
+        size: 50m
+        recurse: true
+      register: large_logs
+      failed_when: false
+
+    - name: Report large log files
+      debug:
+        msg: "{{ item.path }} — {{ (item.size / 1048576) | round(1) }} MB"
+      loop: "{{ large_logs.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | default('none') }}"
+      when: large_logs.files | default([]) | length > 0
+
+    - name: No large log files found
+      debug:
+        msg: "No log files over 50MB found — log rotation appears healthy"
+      when: large_logs.files | default([]) | length == 0
+
+    - name: Check last logrotate execution
+      stat:
+        path: /var/lib/logrotate/logrotate.status
+      register: logrotate_status_file
+      failed_when: false
+
+    - name: Display logrotate last run
+      debug:
+        msg: "logrotate status file last modified: {{ logrotate_status_file.stat.mtime | default('N/A') }}"
+      when: logrotate_status_file.stat is defined and logrotate_status_file.stat.exists
+
+    - name: Count total log files in /var/log
+      find:
+        paths: /var/log
+        patterns: "*.log"
+        recurse: true
+      register: all_logs
+      failed_when: false
+
+    - name: Summary
+      debug:
+        msg:
+          - "=== Log Rotation Summary ==="
+          - "logrotate installed: {{ 'Yes' if logrotate_installed.rc == 0 else 'No' }}"
+          - "Total .log files in /var/log: {{ all_logs.files | default([]) | length }}"
+          - "Files over 50MB: {{ large_logs.files | default([]) | length }}"

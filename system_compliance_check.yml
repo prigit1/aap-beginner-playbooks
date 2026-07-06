@@ -1,0 +1,92 @@
+---
+- name: System Compliance Check
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Check OS version
+      debug:
+        msg: "OS: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+
+    - name: Verify system clock is synchronized
+      command: timedatectl show --property=NTPSynchronized --value
+      register: ntp_sync
+      changed_when: false
+      failed_when: false
+
+    - name: Report NTP status
+      debug:
+        msg: "NTP Synchronized: {{ ntp_sync.stdout | default('unknown') }}"
+
+    - name: Check timezone
+      command: timedatectl show --property=Timezone --value
+      register: timezone
+      changed_when: false
+      failed_when: false
+
+    - name: Display timezone
+      debug:
+        msg: "Timezone: {{ timezone.stdout | default('unknown') }}"
+
+    - name: Check if SELinux is enforcing (Linux only)
+      command: getenforce
+      register: selinux_status
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Report SELinux status
+      debug:
+        msg: "SELinux: {{ selinux_status.stdout | default('N/A') }}"
+      when: ansible_os_family == "RedHat"
+
+    - name: Check if firewall is running (Linux only)
+      command: systemctl is-active firewalld
+      register: firewall_status
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Report firewall status
+      debug:
+        msg: "Firewall (firewalld): {{ firewall_status.stdout | default('N/A') }}"
+      when: ansible_os_family == "RedHat"
+
+    - name: Check for users with UID 0 (root equivalents)
+      command: awk -F':' '$3 == 0 {print $1}' /etc/passwd
+      register: root_users
+      changed_when: false
+      failed_when: false
+
+    - name: Report root-equivalent users
+      debug:
+        msg: "Users with UID 0: {{ root_users.stdout_lines | default([]) }}"
+
+    - name: Assert only root has UID 0
+      assert:
+        that:
+          - root_users.stdout_lines | length <= 1
+        success_msg: "PASS — Only root has UID 0"
+        fail_msg: "FAIL — Multiple users with UID 0 detected: {{ root_users.stdout_lines }}"
+      failed_when: false
+
+    - name: Check password max age policy
+      command: grep "^PASS_MAX_DAYS" /etc/login.defs
+      register: pass_policy
+      changed_when: false
+      failed_when: false
+
+    - name: Display password policy
+      debug:
+        msg: "Password policy: {{ pass_policy.stdout | default('Not configured') }}"
+
+    - name: Summary
+      debug:
+        msg:
+          - "=== Compliance Summary ==="
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "NTP: {{ ntp_sync.stdout | default('unknown') }}"
+          - "SELinux: {{ selinux_status.stdout | default('N/A') }}"
+          - "Firewall: {{ firewall_status.stdout | default('N/A') }}"
+          - "Root users: {{ root_users.stdout_lines | default([]) | length }}"

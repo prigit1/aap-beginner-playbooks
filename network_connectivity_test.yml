@@ -1,0 +1,67 @@
+---
+- name: Network Connectivity Test
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    endpoints_to_check:
+      - name: Google DNS
+        host: 8.8.8.8
+      - name: Cloudflare DNS
+        host: 1.1.1.1
+      - name: Red Hat
+        host: redhat.com
+      - name: GitHub
+        host: github.com
+
+  tasks:
+    - name: Display network interfaces
+      debug:
+        msg: "Interface: {{ item.key }} — IPv4: {{ item.value.ipv4.address | default('N/A') }}"
+      loop: "{{ ansible_interfaces | map('regex_replace', '^(.*)$', '\\1') | list | zip(ansible_interfaces | map('extract', hostvars[inventory_hostname], 'ansible_' ~ item) | list) | list }}"
+      failed_when: false
+      ignore_errors: true
+
+    - name: Display default IPv4 address
+      debug:
+        msg: "Default IPv4: {{ ansible_default_ipv4.address | default('N/A') }} | Gateway: {{ ansible_default_ipv4.gateway | default('N/A') }}"
+
+    - name: Test connectivity to endpoints
+      command: "ping -c 2 -W 3 {{ item.host }}"
+      register: ping_results
+      loop: "{{ endpoints_to_check }}"
+      loop_control:
+        label: "{{ item.name }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Display connectivity results
+      debug:
+        msg: "{{ item.item.name }} ({{ item.item.host }}): {{ 'REACHABLE' if item.rc == 0 else 'UNREACHABLE' }}"
+      loop: "{{ ping_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Test DNS resolution
+      command: "nslookup redhat.com"
+      register: dns_result
+      changed_when: false
+      failed_when: false
+
+    - name: Display DNS result
+      debug:
+        msg: "DNS resolution: {{ 'WORKING' if dns_result.rc == 0 else 'FAILED' }}"
+
+    - name: Check if outbound HTTPS works
+      uri:
+        url: https://www.redhat.com
+        method: HEAD
+        timeout: 10
+        validate_certs: false
+      register: https_check
+      failed_when: false
+
+    - name: Display HTTPS result
+      debug:
+        msg: "HTTPS to redhat.com: {{ https_check.status | default('FAILED') }}"
