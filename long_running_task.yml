@@ -1,0 +1,16 @@
+---
+- name: Long Running Task (10 minutes)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Starting long-running process
+      ansible.builtin.debug:
+        msg: "Starting extended process simulation on {{ inventory_hostname }}"
+
+    - name: Simulating extended workload
+      ansible.builtin.wait_for:
+        timeout: 600
+
+    - name: Process complete
+      ansible.builtin.debug:
+        msg: "Extended process completed successfully on {{ inventory_hostname }}"
